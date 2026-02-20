@@ -235,16 +235,24 @@ describe("Tier 6 - Pixels and images", () => {
     await testSingleFrame("35_create_image.js");
   });
 
-  it.skip("36 - loadImage (requires assets)", async () => {
-    // This sketch requires a test.png asset to be provided.
-    // Skipped unless asset infrastructure is available.
-    await testSingleFrame("36_load_image.js");
+  it("36 - loadImage", async () => {
+    // Generate a small 64x64 red-square PNG using skia-canvas
+    const { Canvas } = await import("skia-canvas");
+    const c = new Canvas(64, 64);
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "red";
+    ctx.fillRect(0, 0, 64, 64);
+    const testPng = Buffer.from(c.toBufferSync("png"));
+
+    const code = readSketch("36_load_image.js");
+    const result = await renderSketch({ code, assets: { "test.png": testPng } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.frames.length).toBeGreaterThanOrEqual(1);
+    expect(result.frames[0].length).toBeGreaterThan(0);
   });
 
-  // Skipped: p5.js v1.11+ implements filter() via WebGL shaders internally.
-  // Headless mode has no WebGL, so filter(GRAY/INVERT/BLUR) fails.
-  // Pixel-level filtering can be done manually via loadPixels/updatePixels.
-  it.skip("37 - image filter (requires WebGL)", async () => {
+  it("37 - image filter", async () => {
     await testSingleFrame("37_image_filter.js");
   });
 
@@ -363,16 +371,13 @@ describe("Tier 10 - Error handling", () => {
     }
   });
 
-  // Skipped: synchronous infinite loops block the event loop and can't be
-  // interrupted without worker_threads. The timeout mechanism uses setTimeout
-  // which can't fire while JS is blocked. Will be fixed when we add worker
-  // thread isolation.
-  it.skip("62 - infinite loop triggers timeout (requires worker threads)", async () => {
+  it("62 - infinite loop triggers timeout (worker isolation)", async () => {
     const code = readSketch("62_infinite_loop.js");
-    const result = await renderSketch({ code, timeout: 2000 });
+    const result = await renderSketch({ code, timeout: 2000, isolate: true });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toBeTruthy();
+      expect(result.error).toContain("Timeout");
     }
   }, 10000);
 

@@ -2,9 +2,10 @@
  * Core rendering logic that ties everything together.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { createEnvironment, type HeadlessEnvironment } from "./shim.js";
 import { wrapGlobalSketch } from "./global-mode-adapter.js";
 import { DeterministicClock } from "./clock.js";
@@ -27,6 +28,8 @@ export interface RendererOptions {
   seed?: number;
   timeout?: number;
   assets?: AssetMap;
+  /** When true, run the sketch in a worker thread so synchronous infinite loops can be terminated. */
+  isolate?: boolean;
 }
 
 export interface RenderSuccess {
@@ -121,7 +124,7 @@ function yieldToEventLoop(ms: number = 10): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export async function renderSketch(options: RendererOptions): Promise<RenderResult> {
+export async function renderSketchInProcess(options: RendererOptions): Promise<RenderResult> {
   const {
     code,
     frames: frameCount = 1,
@@ -201,6 +204,13 @@ export async function renderSketch(options: RendererOptions): Promise<RenderResu
             drawError = { err, phase: "init" as SketchPhase };
             return;
           }
+
+          // Force filter() to use the CPU (software) path. p5.js v1.11+
+          // defaults useWebGL=true, which fails in headless environments.
+          const origFilter = p.filter.bind(p);
+          p.filter = function (operation: any, value?: any) {
+            return origFilter(operation, value, false);
+          };
 
           // Intercept setup
           const userSetup = p.setup ? p.setup.bind(p) : null;
@@ -342,4 +352,115 @@ export async function renderSketch(options: RendererOptions): Promise<RenderResu
       }
     }
   }
+}
+
+/**
+ * Resolve the compiled renderer module URL for the worker to import.
+ * Always uses the dist/ directory since worker threads need proper .js files.
+ */
+function resolveRendererModuleUrl(): string {
+  const dir = dirname(fileURLToPath(import.meta.url));
+  // If we're running from dist/, the .js file is right here.
+  // If we're running from src/ (vitest/tsx), go up one level to find dist/.
+  const jsPath = resolve(dir, "renderer.js");
+  if (existsSync(jsPath)) {
+    return "file://" + jsPath;
+  }
+  const distPath = resolve(dir, "..", "dist", "renderer.js");
+  if (existsSync(distPath)) {
+    return "file://" + distPath;
+  }
+  throw new Error("Cannot find compiled renderer.js for worker thread. Run 'bun run build' first.");
+}
+
+/**
+ * Run a sketch in a worker thread with a hard timeout.
+ * The worker can be terminated to kill synchronous infinite loops.
+ *
+ * Uses a data-URL worker with dynamic import() so it works with both
+ * compiled .js (production) and raw .ts (vitest/tsx development).
+ */
+async function renderSketchIsolated(options: RendererOptions): Promise<RenderResult> {
+  const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
+  const rendererUrl = resolveRendererModuleUrl();
+
+  // Build a self-contained worker script that imports renderSketchInProcess
+  const workerScript = `
+    import { workerData, parentPort } from "node:worker_threads";
+    const { renderSketchInProcess } = await import(${JSON.stringify(rendererUrl)});
+    try {
+      const result = await renderSketchInProcess(workerData);
+      if (result.ok) {
+        parentPort.postMessage({
+          ...result,
+          frames: result.frames.map(f => f.toString("base64")),
+        });
+      } else {
+        parentPort.postMessage({
+          ...result,
+          partial_frames: result.partial_frames.map(f => f.toString("base64")),
+        });
+      }
+    } catch (err) {
+      parentPort.postMessage({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        logs: [],
+        partial_frames: [],
+      });
+    }
+  `;
+
+  return new Promise<RenderResult>((resolve) => {
+    const workerUrl = new URL(`data:text/javascript,${encodeURIComponent(workerScript)}`);
+    const worker = new Worker(workerUrl, {
+      workerData: options,
+    });
+    const timer = setTimeout(() => {
+      worker.terminate().then(() => {
+        resolve({
+          ok: false,
+          error: `Timeout: sketch rendering exceeded ${timeout}ms`,
+          phase: "draw" as SketchPhase,
+          logs: [],
+          partial_frames: [],
+        });
+      });
+    }, timeout);
+
+    worker.on("message", (msg: any) => {
+      clearTimeout(timer);
+      if (msg.ok) {
+        msg.frames = msg.frames.map((s: string) => Buffer.from(s, "base64"));
+      } else {
+        msg.partial_frames = (msg.partial_frames || []).map((s: string) => Buffer.from(s, "base64"));
+      }
+      resolve(msg);
+    });
+
+    worker.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({
+        ok: false,
+        error: err.message,
+        logs: [],
+        partial_frames: [],
+      });
+    });
+
+    worker.on("exit", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        // Worker was terminated or crashed — already resolved via timeout or error handler
+      }
+    });
+  });
+}
+
+/** Render a p5.js sketch. Uses in-process rendering by default, or a worker thread when `isolate: true`. */
+export async function renderSketch(options: RendererOptions): Promise<RenderResult> {
+  if (options.isolate) {
+    return renderSketchIsolated(options);
+  }
+  return renderSketchInProcess(options);
 }

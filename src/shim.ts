@@ -82,6 +82,13 @@ export function createEnvironment(width: number = 400, height: number = 400): He
   if (window.devicePixelRatio === undefined) {
     window.devicePixelRatio = 1;
   }
+  // Provide ImageData constructor (used by p5's CPU filter path)
+  if (!window.ImageData) {
+    const tmpCanvas = new Canvas(1, 1);
+    const tmpCtx = tmpCanvas.getContext("2d");
+    window.ImageData = tmpCtx.getImageData(0, 0, 1, 1).constructor;
+  }
+
   if (!window.AudioContext && !window.webkitAudioContext) {
     window.AudioContext = class StubAudioContext {
       close() {}

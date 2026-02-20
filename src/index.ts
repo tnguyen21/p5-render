@@ -4,7 +4,7 @@
  * Public API. Exports renderSketch() and associated types.
  */
 
-export { renderSketch } from "./renderer.js";
+export { renderSketch, renderSketchInProcess } from "./renderer.js";
 export type {
   RendererOptions as RenderOptions,
   RenderSuccess,

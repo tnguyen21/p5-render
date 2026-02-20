@@ -10,24 +10,6 @@ import { loadImage as skiaLoadImage } from "skia-canvas";
 export type AssetMap = Record<string, Buffer>;
 
 /**
- * Create a patched loadImage function that resolves from the assets map.
- * Returns a function that can be assigned to the p5 instance.
- */
-export function createImageLoader(assets: AssetMap) {
-  return async function loadImageFromAssets(path: string): Promise<any> {
-    const buffer = assets[path];
-    if (!buffer) {
-      throw new Error(
-        `Asset not found: "${path}". Available assets: [${Object.keys(assets).join(", ")}]`
-      );
-    }
-    // skia-canvas loadImage accepts a Buffer
-    const img = await skiaLoadImage(buffer);
-    return img;
-  };
-}
-
-/**
  * Create a patched loadFont function that resolves from the assets map.
  * For now, this is a stub that throws a clear error if the font isn't
  * in the assets map. Full font loading support can be added later.
@@ -36,42 +18,77 @@ export function createFontLoader(assets: AssetMap) {
   return function loadFontFromAssets(path: string): any {
     const buffer = assets[path];
     if (!buffer) {
-      throw new Error(
-        `Font asset not found: "${path}". Available assets: [${Object.keys(assets).join(", ")}]`
-      );
+      throw new Error(`Font asset not found: "${path}". Available assets: [${Object.keys(assets).join(", ")}]`);
     }
     // TODO: register font with skia-canvas FontLibrary and return a font name
-    // For now, return the path as a placeholder
     return path;
   };
 }
 
 /**
  * Patch p5's asset loading functions on the given p5 instance.
- * This replaces the default network-based loaders with our buffer-based ones.
+ *
+ * For loadImage: creates a real p5.Image via p.createImage(), loads the
+ * buffer with skia-canvas, draws it onto the p5.Image's canvas, and
+ * properly interacts with p5's preload counter so preload() works.
  */
 export function patchAssetLoaders(p: any, assets: AssetMap): void {
   if (!assets || Object.keys(assets).length === 0) return;
 
-  const imageLoader = createImageLoader(assets);
-
-  // Override p5's loadImage
   const originalLoadImage = p.loadImage?.bind(p);
+
   p.loadImage = function (path: string, successCallback?: (img: any) => void, failureCallback?: (err: any) => void) {
-    // Check if the path is in our assets map
-    if (assets[path]) {
-      const promise = imageLoader(path);
-      if (successCallback) {
-        promise.then(successCallback).catch(failureCallback || (() => {}));
+    if (!assets[path]) {
+      // Fall through to original if not in assets
+      if (originalLoadImage) {
+        return originalLoadImage(path, successCallback, failureCallback);
       }
-      // p5's loadImage returns a p5.Image, but we return the skia Image.
-      // This is a simplification; full compatibility would require wrapping.
-      return promise;
+      throw new Error(`Cannot load image "${path}" in headless mode without providing it in the assets map.`);
     }
-    // Fall through to original if not in assets (will likely fail in headless)
-    if (originalLoadImage) {
-      return originalLoadImage(path, successCallback, failureCallback);
-    }
-    throw new Error(`Cannot load image "${path}" in headless mode without providing it in the assets map.`);
+
+    // Create a 1x1 p5.Image placeholder (resized once loaded)
+    // Note: p5's preload wrapper already calls _incrementPreload() for us,
+    // so we only need to call _decrementPreload() when the image is ready.
+    const pImg = p.createImage(1, 1);
+
+    // Asynchronously load the buffer and populate the p5.Image
+    skiaLoadImage(assets[path])
+      .then((skiaImg: any) => {
+        const w = skiaImg.width;
+        const h = skiaImg.height;
+
+        // Resize the p5.Image's underlying canvas
+        pImg.width = w;
+        pImg.height = h;
+        if (pImg.canvas) {
+          pImg.canvas.width = w;
+          pImg.canvas.height = h;
+        }
+
+        // Draw the skia image onto the p5.Image's canvas
+        const ctx = pImg.canvas?.getContext?.("2d");
+        if (ctx) {
+          // Unwrap to underlying skia canvas if needed (drawImage patch)
+          ctx.drawImage(skiaImg, 0, 0);
+        }
+
+        // Sync p5.Image pixel state
+        if (typeof pImg.loadPixels === "function") {
+          pImg.loadPixels();
+        }
+
+        if (successCallback) successCallback(pImg);
+        if (typeof p._decrementPreload === "function") {
+          p._decrementPreload();
+        }
+      })
+      .catch((err: any) => {
+        if (failureCallback) failureCallback(err);
+        if (typeof p._decrementPreload === "function") {
+          p._decrementPreload();
+        }
+      });
+
+    return pImg;
   };
 }
