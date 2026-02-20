@@ -136,6 +136,26 @@ describe("Real-world sketches", () => {
   }
 });
 
+describe("WebGL", () => {
+  it("basic WEBGL canvas renders", async () => {
+    const code = readSketch("70_webgl_basic.js");
+    const result = await renderSketch({ code });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.frames.length).toBeGreaterThanOrEqual(1);
+    expect(result.frames[0].length).toBeGreaterThan(100); // non-trivial PNG
+  });
+
+  it("3D transforms with lighting", async () => {
+    const code = readSketch("71_webgl_3d_transforms.js");
+    const result = await renderSketch({ code });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.frames.length).toBeGreaterThanOrEqual(1);
+    expect(result.frames[0].length).toBeGreaterThan(100);
+  });
+});
+
 describe("Error handling", () => {
   it("syntax error returns structured error", async () => {
     const result = await renderSketch({ code: readSketch("60_syntax_error.js") });

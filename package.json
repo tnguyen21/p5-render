@@ -18,6 +18,7 @@
     "format": "npx @biomejs/biome format --write src/ test/ bench/"
   },
   "dependencies": {
+    "gl": "^8.1.6",
     "jsdom": "^26.0.0",
     "p5": "^1.11.3",
     "skia-canvas": "^2.0.0"
@@ -34,6 +35,8 @@
     "node": ">=22.0.0"
   },
   "trustedDependencies": [
+    "esbuild",
+    "gl",
     "skia-canvas"
   ]
 }

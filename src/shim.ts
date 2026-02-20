@@ -2,11 +2,29 @@
  * jsdom + skia-canvas environment for headless p5.js rendering.
  *
  * Uses jsdom's real HTMLCanvasElement (full DOM fidelity) but swaps
- * getContext('2d') to return a skia-canvas context.
+ * getContext('2d') to return a skia-canvas context. WebGL contexts
+ * are provided via headless-gl.
  */
 
 import { JSDOM } from "jsdom";
 import { Canvas } from "skia-canvas";
+import { createRequire } from "node:module";
+
+const nodeRequire = createRequire(import.meta.url);
+
+// Lazy-load headless-gl to avoid breaking worker threads (native addons
+// can't be loaded from data-URL workers used by isolate mode)
+let _createGL: ((w: number, h: number, attrs?: any) => any) | null | false;
+function getCreateGL(): ((w: number, h: number, attrs?: any) => any) | null {
+  if (_createGL === undefined) {
+    try {
+      _createGL = nodeRequire("gl");
+    } catch {
+      _createGL = false; // mark as unavailable
+    }
+  }
+  return _createGL || null;
+}
 
 const MAX_DIM = 4096;
 
@@ -65,6 +83,17 @@ export function createEnvironment(width = 400, height = 400): HeadlessEnvironmen
 
   window.AudioContext = class { close() {} };
 
+  // Stub WebGLRenderingContext so p5's instanceof checks work
+  const createGL = getCreateGL();
+  if (createGL) {
+    try {
+      const tmpGl = createGL(1, 1, {});
+      if (tmpGl) {
+        window.WebGLRenderingContext = Object.getPrototypeOf(tmpGl).constructor;
+      }
+    } catch {}
+  }
+
   const start = Date.now();
   window.performance = { now: () => Date.now() - start };
 
@@ -103,8 +132,9 @@ function patchCanvasElement(el: any, defaultWidth: number, defaultHeight: number
   });
 
   let cachedCtx: any = null;
+  let cachedGlCtx: any = null;
 
-  el.getContext = function (type: string, _attrs?: any) {
+  el.getContext = function (type: string, attrs?: any) {
     if (type === "2d") {
       if (cachedCtx) return cachedCtx;
       const ctx = skia.getContext("2d");
@@ -117,7 +147,22 @@ function patchCanvasElement(el: any, defaultWidth: number, defaultHeight: number
       cachedCtx = ctx;
       return ctx;
     }
-    // Return null for webgl — p5 tries it for filter() and falls back to 2D
+    if (type === "webgl" || type === "experimental-webgl") {
+      if (cachedGlCtx) return cachedGlCtx;
+      const createGL = getCreateGL();
+      if (!createGL) return null;
+      try {
+        const glCtx = createGL(skia.width, skia.height, attrs || {});
+        if (!glCtx) return null;
+        (glCtx as any).canvas = el;
+        cachedGlCtx = glCtx;
+        return glCtx;
+      } catch {
+        return null;
+      }
+    }
+    // Return null for webgl2 — p5 tries webgl2 → webgl → experimental-webgl;
+    // headless-gl only supports WebGL 1.0, so we let p5 fall through.
     return null;
   };
 }

@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { Canvas } from "skia-canvas";
 import { createEnvironment, type HeadlessEnvironment } from "./shim.js";
 import { wrapGlobalSketch } from "./global-mode-adapter.js";
 import { DeterministicClock } from "./clock.js";
@@ -95,8 +96,40 @@ function findSkiaCanvas(p: any, document: any): any {
 }
 
 function captureFrame(p: any, document: any): Buffer | null {
+  // WebGL path: read pixels from GL context (check first — skia canvas
+  // exists on WebGL canvases too but has no associated 2D context)
+  const gl = p?._renderer?.GL;
+  if (gl) {
+    const w = gl.drawingBufferWidth;
+    const h = gl.drawingBufferHeight;
+    const pixels = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    flipVertical(pixels, w, h);
+    const canvas = new Canvas(w, h);
+    const ctx = canvas.getContext("2d");
+    const imageData = ctx.createImageData(w, h);
+    imageData.data.set(pixels);
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.toBufferSync("png");
+  }
+
+  // 2D path: use skia-canvas directly
   const skiaCanvas = findSkiaCanvas(p, document);
-  return skiaCanvas ? skiaCanvas.toBufferSync("png") : null;
+  if (skiaCanvas) return skiaCanvas.toBufferSync("png");
+
+  return null;
+}
+
+function flipVertical(pixels: Uint8Array, w: number, h: number): void {
+  const rowSize = w * 4;
+  const tmp = new Uint8Array(rowSize);
+  for (let y = 0; y < h / 2; y++) {
+    const top = y * rowSize;
+    const bottom = (h - 1 - y) * rowSize;
+    tmp.set(pixels.subarray(top, top + rowSize));
+    pixels.copyWithin(top, bottom, bottom + rowSize);
+    pixels.set(tmp, bottom);
+  }
 }
 
 function yieldToEventLoop(ms = 10): Promise<void> {
