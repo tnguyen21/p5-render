@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.tsbuildinfo
+test/references/
+bench/baseline.json
+.DS_Store
