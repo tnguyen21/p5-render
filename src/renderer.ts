@@ -285,6 +285,12 @@ export async function renderSketch(options: RendererOptions): Promise<RenderResu
         }
 
         // --- Step through requested frames via redraw() ---
+        // Discard any frames captured during p5 init (p5 calls draw() once
+        // automatically before noLoop takes effect). We want exactly the
+        // number of frames the caller requested.
+        capturedFrames.length = 0;
+        drawCount = 0;
+
         for (let i = 0; i < frameCount && !drawError; i++) {
           try {
             p5Instance.redraw();
@@ -305,11 +311,16 @@ export async function renderSketch(options: RendererOptions): Promise<RenderResu
           if (frame) capturedFrames.push(frame);
         }
 
+        // Report actual canvas dimensions (may be clamped from what the sketch requested)
+        const skia = findSkiaCanvas(p5Instance, document);
+        const actualWidth = skia?.width || p5Instance?.width || width;
+        const actualHeight = skia?.height || p5Instance?.height || height;
+
         return {
           ok: true as const,
           frames: capturedFrames,
-          width: p5Instance?.width || width,
-          height: p5Instance?.height || height,
+          width: actualWidth,
+          height: actualHeight,
           duration_ms: Date.now() - startTime,
           logs,
         };

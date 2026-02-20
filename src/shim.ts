@@ -13,6 +13,8 @@
 import { JSDOM } from "jsdom";
 import { Canvas } from "skia-canvas";
 
+const MAX_DIM = 4096;
+
 export interface HeadlessEnvironment {
   window: any;
   document: any;
@@ -104,36 +106,63 @@ export function createEnvironment(width: number = 400, height: number = 400): He
  * The element retains all its DOM behavior (style, classList, parentNode,
  * appendChild, event listeners, etc.) — we only replace the rendering
  * surface and context.
+ *
+ * IMPORTANT: We must NOT override ctx.canvas on the skia context. The
+ * skia-canvas native code (getImageData, drawImage, etc.) accesses
+ * this.canvas via a private WeakRef to the skia Canvas. Overriding it
+ * with the JSDOM element causes native downcast failures. Instead, we
+ * leave ctx.canvas pointing to the skia Canvas and let p5.js use
+ * p._renderer.canvas / p._renderer.elt for DOM operations.
+ *
+ * For drawImage: when p5 passes a JSDOM canvas element as source,
+ * we unwrap it to the underlying skia Canvas.
  */
+function clamp(v: number): number {
+  return Math.max(1, Math.min(v, MAX_DIM));
+}
+
 function patchCanvasElement(el: any, defaultWidth: number, defaultHeight: number): void {
-  const skia = new Canvas(defaultWidth, defaultHeight);
+  const skia = new Canvas(clamp(defaultWidth), clamp(defaultHeight));
   el._skiaCanvas = skia;
 
-  // Sync width/height to skia-canvas
+  // Sync width/height to skia-canvas, clamping to prevent OOM
   Object.defineProperty(el, "width", {
     get: () => skia.width,
-    set: (v: number) => { skia.width = v; },
+    set: (v: number) => { skia.width = clamp(v); },
     configurable: true,
   });
   Object.defineProperty(el, "height", {
     get: () => skia.height,
-    set: (v: number) => { skia.height = v; },
+    set: (v: number) => { skia.height = clamp(v); },
     configurable: true,
   });
+
+  let cachedCtx: any = null;
 
   // Route getContext to skia-canvas
   el.getContext = function (type: string, _attrs?: any) {
     if (type === "2d") {
+      if (cachedCtx) return cachedCtx;
+
       const ctx = skia.getContext("2d");
-      Object.defineProperty(ctx, "canvas", {
-        value: el,
-        writable: false,
-        configurable: true,
-      });
+
+      // Wrap drawImage to unwrap JSDOM canvas elements to their skia Canvas.
+      // skia-canvas checks `image instanceof Canvas` which fails for JSDOM elements.
+      const origDrawImage = ctx.drawImage.bind(ctx) as Function;
+      ctx.drawImage = function (source: any, ...args: any[]) {
+        if (source && source._skiaCanvas) {
+          return origDrawImage(source._skiaCanvas, ...args);
+        }
+        return origDrawImage(source, ...args);
+      } as typeof ctx.drawImage;
+
+      cachedCtx = ctx;
       return ctx;
     }
     if (type === "webgl" || type === "webgl2") {
-      throw new Error("WEBGL not supported in headless mode. Use P2D (default) renderer.");
+      // Return null instead of throwing. p5.js tries WebGL internally for
+      // filter() operations and falls back to 2D when context creation fails.
+      return null;
     }
     return null;
   };
