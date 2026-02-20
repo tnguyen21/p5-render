@@ -34,6 +34,7 @@ function parseArgs(argv) {
     width: undefined,
     height: undefined,
     concurrency: 4,
+    isolate: false,
   };
 
   const positional = [];
@@ -64,6 +65,8 @@ function parseArgs(argv) {
       args.height = parseInt(argv[++i], 10);
     } else if (arg === "--concurrency") {
       args.concurrency = parseInt(argv[++i], 10);
+    } else if (arg === "--isolate") {
+      args.isolate = true;
     } else if (arg === "-h" || arg === "--help") {
       printUsage();
       process.exit(0);
@@ -103,6 +106,7 @@ Options:
   --height <N>           Override canvas height
   --out-dir <dir>        Output directory for batch mode
   --concurrency <N>      Batch concurrency (default: 4)
+  --isolate              Run sketch in worker thread (enables hard timeout)
   -h, --help             Show this help message
 `);
 }
@@ -182,6 +186,7 @@ async function doRender(renderSketch, args) {
   if (args.seed !== undefined) opts.seed = args.seed;
   if (args.width !== undefined) opts.width = args.width;
   if (args.height !== undefined) opts.height = args.height;
+  if (args.isolate) opts.isolate = true;
 
   const result = await renderSketch(opts);
 
@@ -302,6 +307,7 @@ async function doBatch(renderSketch, args) {
         seed: entry.seed ?? args.seed,
         width: entry.width ?? args.width,
         height: entry.height ?? args.height,
+        isolate: true,
       };
 
       try {

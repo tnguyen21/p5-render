@@ -21,6 +21,7 @@ interface CliArgs {
   width?: number;
   height?: number;
   concurrency: number;
+  isolate: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -30,6 +31,7 @@ function parseArgs(argv: string[]): CliArgs {
     frames: 1,
     timeout: 5000,
     concurrency: 4,
+    isolate: false,
   };
 
   let i = 0;
@@ -69,6 +71,9 @@ function parseArgs(argv: string[]): CliArgs {
       case "--concurrency":
         result.concurrency = parseInt(args[++i], 10);
         break;
+      case "--isolate":
+        result.isolate = true;
+        break;
       case "-h":
       case "--help":
         printHelp();
@@ -106,6 +111,7 @@ Options:
   --height <N>            Override canvas height
   --out-dir <dir>         Output directory (for batch or multi-frame)
   --concurrency <N>       Batch concurrency (default: 4)
+  --isolate               Run sketch in worker thread (enables hard timeout)
   -h, --help              Show this help message
 
 Examples:
@@ -151,6 +157,7 @@ async function renderSingle(args: CliArgs): Promise<void> {
     frames: args.frames,
     seed: args.seed,
     timeout: args.timeout,
+    isolate: args.isolate,
   });
 
   if (!result.ok) {
@@ -212,21 +219,22 @@ async function renderBatch(args: CliArgs): Promise<void> {
   const content = readFileSync(inputPath, "utf-8");
   const lines = content.split("\n").filter((l) => l.trim());
 
+  const entries = lines
+    .map((line, i) => {
+      try {
+        return JSON.parse(line) as { code: string; id?: string; [key: string]: any };
+      } catch {
+        console.error(`Invalid JSON line ${i}: ${line.substring(0, 100)}...`);
+        return null;
+      }
+    })
+    .filter((e): e is NonNullable<typeof e> => e !== null);
+
   let completed = 0;
   let errors = 0;
 
-  // Simple sequential batch for now (concurrency can be added later with a pool)
-  for (const line of lines) {
-    let entry: { code: string; id: string; [key: string]: any };
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      console.error(`Invalid JSON line: ${line.substring(0, 100)}...`);
-      errors++;
-      continue;
-    }
-
-    const id = entry.id || `sketch_${completed}`;
+  async function processOne(entry: { code: string; id?: string }, idx: number): Promise<void> {
+    const id = entry.id || `sketch_${idx}`;
     const result = await renderSketch({
       code: entry.code,
       width: args.width,
@@ -234,22 +242,31 @@ async function renderBatch(args: CliArgs): Promise<void> {
       frames: args.frames,
       seed: args.seed,
       timeout: args.timeout,
+      isolate: true,
     });
 
     if (result.ok) {
-      const outPath = join(resolve(outDir), `${id}.png`);
-      writeFileSync(outPath, result.frames[0]);
+      writeFileSync(join(resolve(outDir), `${id}.png`), result.frames[0]);
       completed++;
     } else {
       console.error(`[${id}] Error: ${result.error}`);
       errors++;
     }
+  }
 
-    // Progress
-    if ((completed + errors) % 10 === 0 || completed + errors === lines.length) {
-      console.log(`Progress: ${completed + errors}/${lines.length} (${errors} errors)`);
+  // Sliding window concurrency pool
+  const active = new Set<Promise<void>>();
+  for (let i = 0; i < entries.length; i++) {
+    const p = processOne(entries[i], i).then(() => { active.delete(p); });
+    active.add(p);
+    if (active.size >= args.concurrency) {
+      await Promise.race(active);
+    }
+    if ((completed + errors) % 100 === 0 && completed + errors > 0) {
+      console.log(`Progress: ${completed + errors}/${entries.length} (${errors} errors)`);
     }
   }
+  await Promise.all(active);
 
   console.log(`Batch complete: ${completed} rendered, ${errors} errors, output in ${resolve(outDir)}/`);
 }
