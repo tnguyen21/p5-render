@@ -4,3 +4,4 @@ dist/
 test/references/
 bench/baseline.json
 .DS_Store
+test/renders/

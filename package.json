@@ -12,6 +12,7 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
+    "render-all": "tsx test/render-all.ts",
     "generate-references": "tsx test/generate-references.ts",
     "bench": "tsx bench/runner.ts",
     "lint": "npx @biomejs/biome check src/ test/ bench/",
