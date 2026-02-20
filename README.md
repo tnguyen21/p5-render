@@ -80,6 +80,16 @@ npx tsx bench/runner.ts --save baseline.json  # save baseline
 npx tsx bench/runner.ts --compare baseline.json  # compare against baseline
 ```
 
+### Render all test sketches
+
+Render every test sketch to PNG for visual inspection:
+
+```bash
+bun run render-all            # outputs to test/renders/
+bun run render-all /tmp/out   # custom output directory
+open test/renders/            # browse results
+```
+
 ### Reference images
 
 Test sketches are compared against browser-rendered reference PNGs (when they exist).
