@@ -1,0 +1,36 @@
+{
+  "name": "p5-render",
+  "version": "0.1.0",
+  "description": "Headless p5.js renderer for batch rendering sketches to PNG",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "p5-render": "./bin/p5-render.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "generate-references": "tsx test/generate-references.ts",
+    "bench": "tsx bench/runner.ts",
+    "lint": "npx @biomejs/biome check src/ test/ bench/",
+    "format": "npx @biomejs/biome format --write src/ test/ bench/"
+  },
+  "dependencies": {
+    "jsdom": "^26.0.0",
+    "p5": "^1.11.3",
+    "skia-canvas": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^22.0.0",
+    "playwright": "^1.50.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
