@@ -105,6 +105,7 @@ const SOUND_CLASSES: Record<string, new (...args: any[]) => any> = {
 export function patchSoundStubs(p: any, p5Constructor: any): void {
   // Instance-level no-op methods
   p.soundFormats = noop;
+  p.masterVolume = noop;
   p.userStartAudio = noopPromise;
   p.getAudioContext = () => (typeof window !== "undefined" ? new (window as any).AudioContext() : {});
 

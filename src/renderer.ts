@@ -201,8 +201,44 @@ export async function renderSketchInProcess(options: RendererOptions): Promise<R
           if (!p.p5) p.p5 = p5Constructor;
           if (!p.screen) p.screen = window.screen;
           if (!p.document) p.document = document;
+          if (!p.window) p.window = window;
           // Some sketches call blur() as a standalone CSS filter shorthand
           if (!p.blur) p.blur = () => {};
+          // Processing compat: println is console.log
+          if (!p.println) p.println = (...args: any[]) => { capturedConsole.log(...args); };
+
+          // Initialize random state early — sketches may call random() in
+          // their top-level body before setup() runs
+          const effectiveSeed = seed ?? (Math.random() * 4294967296) | 0;
+          try { p.randomSeed(effectiveSeed); p.noiseSeed(effectiveSeed); } catch {}
+
+          // Expose DOMMatrix for with(p) scope — jsdom doesn't provide it
+          if (!p.DOMMatrix) p.DOMMatrix = window.DOMMatrix;
+
+          // createCapture tries to access camera — stub it to prevent setup hang
+          const origCreateCapture = p.createCapture?.bind(p);
+          p.createCapture = function (...args: any[]) {
+            // Return a stub video element with enough surface for p5 sketches
+            const el = document.createElement("video");
+            el.width = width;
+            el.height = height;
+            el.loadedmetadata = true;
+            // p5 wraps the element in a p5.MediaElement — create one if possible
+            try {
+              const me = new p5Constructor.MediaElement(el, p);
+              me.loadPixels = () => {};
+              queueMicrotask(() => {
+                const cb = args.find((a: any) => typeof a === "function");
+                if (cb) cb(me);
+              });
+              return me;
+            } catch {
+              el.loadPixels = () => {};
+              el.get = () => p.createImage(1, 1);
+              el.pixels = [];
+              return el;
+            }
+          };
 
           try {
             sketchFn(p);
@@ -219,10 +255,12 @@ export async function renderSketchInProcess(options: RendererOptions): Promise<R
           p.setup = function () {
             try {
               p.pixelDensity(1);
-              if (seed !== undefined) {
-                p.randomSeed(seed);
-                p.noiseSeed(seed);
-              }
+              // Always init random state — p5's _lcg_random_state is
+              // undefined until randomSeed() is called, but some sketches
+              // use random() before ever calling randomSeed().
+              const effectiveSeed = seed ?? (Math.random() * 4294967296) | 0;
+              p.randomSeed(effectiveSeed);
+              p.noiseSeed(effectiveSeed);
               p.frameRate(frameRate);
               if (userSetup) userSetup();
               else p.createCanvas(width, height);

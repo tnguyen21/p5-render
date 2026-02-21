@@ -65,6 +65,16 @@ if (undefinedVars.size > 0) {
   }
 }
 
+// Detailed dumps for fixable categories
+for (const cat of ["null_property_access", "not_a_function", "not_a_constructor", "other", "setup_timeout"]) {
+  const entries = results.filter((r: any) => !r.ok && categorize(r.error || "unknown") === cat);
+  if (entries.length === 0) continue;
+  console.log(`\n--- ${cat} (all ${entries.length}) ---`);
+  for (const r of entries) {
+    console.log(`  #${r.id} "${r.title}": ${(r.error || "").slice(0, 200)}`);
+  }
+}
+
 // Duration stats for successful renders
 const durations = results.filter(r => r.ok).map(r => r.duration_ms).sort((a: number, b: number) => a - b);
 if (durations.length > 0) {

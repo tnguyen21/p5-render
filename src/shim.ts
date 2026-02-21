@@ -146,6 +146,53 @@ export function createEnvironment(
   const WebGLCtorCached = getWebGLRenderingContext();
   if (WebGLCtorCached) window.WebGLRenderingContext = WebGLCtorCached;
 
+  // DOMPoint stub — jsdom doesn't provide it, p5 uses it for 3D transforms
+  if (!window.DOMPoint) {
+    window.DOMPoint = class DOMPoint {
+      x: number; y: number; z: number; w: number;
+      constructor(x = 0, y = 0, z = 0, w = 1) { this.x = x; this.y = y; this.z = z; this.w = w; }
+      matrixTransform() { return new DOMPoint(this.x, this.y, this.z, this.w); }
+      toJSON() { return { x: this.x, y: this.y, z: this.z, w: this.w }; }
+    };
+  }
+
+  // DOMMatrix stub — jsdom doesn't provide it, p5 uses it in accessibility/outputs
+  if (!window.DOMMatrix) {
+    window.DOMMatrix = class DOMMatrix {
+      m11 = 1; m12 = 0; m13 = 0; m14 = 0;
+      m21 = 0; m22 = 1; m23 = 0; m24 = 0;
+      m31 = 0; m32 = 0; m33 = 1; m34 = 0;
+      m41 = 0; m42 = 0; m43 = 0; m44 = 1;
+      get a() { return this.m11; } get b() { return this.m12; }
+      get c() { return this.m21; } get d() { return this.m22; }
+      get e() { return this.m41; } get f() { return this.m42; }
+      constructor(init?: any) {
+        if (Array.isArray(init) && init.length === 16) {
+          [this.m11,this.m12,this.m13,this.m14,this.m21,this.m22,this.m23,this.m24,
+           this.m31,this.m32,this.m33,this.m34,this.m41,this.m42,this.m43,this.m44] = init;
+        }
+      }
+      multiply() { return new DOMMatrix(); }
+      multiplySelf() { return this; }
+      translate() { return new DOMMatrix(); }
+      translateSelf() { return this; }
+      scale() { return new DOMMatrix(); }
+      scaleSelf() { return this; }
+      scale3dSelf() { return this; }
+      rotate() { return new DOMMatrix(); }
+      rotateSelf() { return this; }
+      rotateAxisAngleSelf() { return this; }
+      rotateFromVectorSelf() { return this; }
+      skewXSelf() { return this; }
+      skewYSelf() { return this; }
+      invertSelf() { return this; }
+      inverse() { return new DOMMatrix(); }
+      transformPoint(p?: any) { return { x: 0, y: 0, z: 0, w: 1 }; }
+      toFloat64Array() { return new Float64Array([this.m11,this.m12,this.m13,this.m14,this.m21,this.m22,this.m23,this.m24,this.m31,this.m32,this.m33,this.m34,this.m41,this.m42,this.m43,this.m44]); }
+      toFloat32Array() { return new Float32Array([this.m11,this.m12,this.m13,this.m14,this.m21,this.m22,this.m23,this.m24,this.m31,this.m32,this.m33,this.m34,this.m41,this.m42,this.m43,this.m44]); }
+    };
+  }
+
   const start = Date.now();
   window.performance = { now: () => Date.now() - start };
 

@@ -76,7 +76,14 @@ export function patchAssetLoaders(p: any, assets: AssetMap): void {
   // Patch loadTable to not hang
   p.loadTable = function (path: string, ...args: any[]) {
     const successCallback = args.find((a: any) => typeof a === "function");
-    const stub = { getRowCount: () => 0, getColumnCount: () => 0, getRow: () => null, getRows: () => [], columns: [] };
+    const stub = {
+      getRowCount: () => 0, getColumnCount: () => 0,
+      getRow: () => null, getRows: () => [], columns: [],
+      getString: () => "", getNum: () => 0, getObject: () => ({}),
+      findRow: () => null, findRows: () => [], matchRow: () => null, matchRows: () => [],
+      getColumn: () => [], set: () => {}, setString: () => {}, setNum: () => {},
+      addRow: () => {}, removeRow: () => {}, addColumn: () => {}, removeColumn: () => {},
+    };
     queueMicrotask(() => {
       try { p._decrementPreload(); } catch {}
       if (successCallback) successCallback(stub);
@@ -95,9 +102,19 @@ export function patchAssetLoaders(p: any, assets: AssetMap): void {
     return stub;
   };
 
-  // Patch loadShader to not hang
+  // Patch loadShader to not hang — stub must have p5.Shader methods
   p.loadShader = function (vertPath: string, fragPath: string, successCallback?: Function, failureCallback?: Function) {
-    const stub = {};
+    const noop = () => stub;
+    const stub: Record<string, any> = {
+      setUniform: noop, ensureCompiledOnContext: noop,
+      useProgram: noop, bindShader: noop, unbindShader: noop,
+      bindTextures: noop, copyToContext: noop, setDefaultUniforms: noop,
+      isStrokeShader: () => false, isLightShader: () => false,
+      isTextureShader: () => false, isColorShader: () => false,
+      isNormalShader: () => false, isTexLightShader: () => false,
+      _vertSrc: "", _fragSrc: "", _glProgram: null,
+      uniforms: {},
+    };
     queueMicrotask(() => {
       try { p._decrementPreload(); } catch {}
       if (successCallback) successCallback(stub);
