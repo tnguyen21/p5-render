@@ -196,6 +196,12 @@ export async function renderSketchInProcess(options: RendererOptions): Promise<R
           p.mouseX = width / 2;
           p.mouseY = height / 2;
 
+          // Expose globals that global-mode sketches reference via bare names
+          // (the with(p) wrapper only sees properties on p, not window)
+          if (!p.p5) p.p5 = p5Constructor;
+          if (!p.screen) p.screen = window.screen;
+          if (!p.document) p.document = document;
+
           try {
             sketchFn(p);
           } catch (err) {

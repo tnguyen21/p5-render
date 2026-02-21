@@ -26,6 +26,28 @@ function getCreateGL(): ((w: number, h: number, attrs?: any) => any) | null {
   return _createGL || null;
 }
 
+// Cache WebGLRenderingContext constructor at module level so we don't
+// leak a temp GL context on every createEnvironment() call.
+let _WebGLRenderingContext: any;
+function getWebGLRenderingContext(): any {
+  if (_WebGLRenderingContext !== undefined) return _WebGLRenderingContext;
+  const createGL = getCreateGL();
+  if (createGL) {
+    try {
+      const tmpGl = createGL(1, 1, {});
+      if (tmpGl) {
+        _WebGLRenderingContext = Object.getPrototypeOf(tmpGl).constructor;
+        // Destroy temp context immediately to free the GL resource
+        const ext = tmpGl.getExtension("STACKGL_destroy_context");
+        if (ext) ext.destroy();
+        return _WebGLRenderingContext;
+      }
+    } catch {}
+  }
+  _WebGLRenderingContext = null;
+  return null;
+}
+
 const MAX_DIM = 4096;
 
 export interface HeadlessEnvironment {
@@ -53,10 +75,14 @@ export function createEnvironment(
   const window = dom.window as any;
   const document = window.document;
 
+  const createdCanvases: any[] = [];
   const originalCreateElement = document.createElement.bind(document);
   document.createElement = function (tagName: string, options?: any): any {
     const el = originalCreateElement(tagName, options);
-    if (tagName.toLowerCase() === "canvas") patchCanvasElement(el, width, height);
+    if (tagName.toLowerCase() === "canvas") {
+      patchCanvasElement(el, width, height);
+      createdCanvases.push(el);
+    }
     return el;
   };
 
@@ -117,15 +143,8 @@ export function createEnvironment(
   window.webkitAudioContext = window.AudioContext;
 
   // Stub WebGLRenderingContext so p5's instanceof checks work
-  const createGL = getCreateGL();
-  if (createGL) {
-    try {
-      const tmpGl = createGL(1, 1, {});
-      if (tmpGl) {
-        window.WebGLRenderingContext = Object.getPrototypeOf(tmpGl).constructor;
-      }
-    } catch {}
-  }
+  const WebGLCtorCached = getWebGLRenderingContext();
+  if (WebGLCtorCached) window.WebGLRenderingContext = WebGLCtorCached;
 
   const start = Date.now();
   window.performance = { now: () => Date.now() - start };
@@ -137,7 +156,21 @@ export function createEnvironment(
     window,
     document,
     stepFrame,
-    destroy() { rafCallbacks = []; dom.window.close(); },
+    destroy() {
+      rafCallbacks = [];
+      // Destroy GL contexts to free headless-gl resources
+      for (const el of createdCanvases) {
+        const gl = el._glCtx;
+        if (gl) {
+          try {
+            const ext = gl.getExtension("STACKGL_destroy_context");
+            if (ext) ext.destroy();
+          } catch {}
+        }
+      }
+      createdCanvases.length = 0;
+      dom.window.close();
+    },
   };
 }
 
@@ -192,6 +225,7 @@ function patchCanvasElement(el: any, defaultWidth: number, defaultHeight: number
         if (!glCtx) return null;
         (glCtx as any).canvas = el;
         cachedGlCtx = glCtx;
+        el._glCtx = glCtx;
         return glCtx;
       } catch {
         return null;
