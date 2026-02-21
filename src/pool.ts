@@ -4,6 +4,9 @@
  * Spawns N long-lived Worker threads from dist/worker.js. Each worker
  * loads jsdom + skia-canvas + gl once and stays alive between renders,
  * avoiding the per-request native module loading that causes SIGSEGV.
+ *
+ * WebGL sketches are automatically serialized (one at a time) because
+ * headless-gl only supports a single active GL context per process.
  */
 
 import { Worker } from "node:worker_threads";
@@ -24,11 +27,17 @@ function resolveWorkerPath(): string {
   throw new Error("Cannot find compiled worker.js. Run 'bun run build' first.");
 }
 
+/** Detect if sketch code uses WebGL (createCanvas with WEBGL arg) */
+function isWebGLSketch(code: string): boolean {
+  return /createCanvas\s*\([^)]*WEBGL/i.test(code);
+}
+
 interface QueuedRequest {
   id: number;
   options: RendererOptions;
   resolve: (result: RenderResult) => void;
   timer: ReturnType<typeof setTimeout>;
+  webgl: boolean;
 }
 
 interface PoolWorker {
@@ -46,6 +55,14 @@ export class WorkerPool {
   private workerPath: string;
   private defaultTimeout: number;
   private destroyed = false;
+  /**
+   * Dedicated worker for WebGL renders. headless-gl binds to the first
+   * thread that creates a GL context — only that thread can create
+   * subsequent contexts, so all WebGL work must go to the same worker.
+   */
+  private glWorker: PoolWorker | null = null;
+  /** Queue for WebGL requests (serialized through glWorker) */
+  private glQueue: QueuedRequest[] = [];
 
   constructor(opts: { size: number; timeout?: number }) {
     this.workerPath = resolveWorkerPath();
@@ -53,6 +70,8 @@ export class WorkerPool {
     for (let i = 0; i < opts.size; i++) {
       this.workers.push(this.spawnWorker());
     }
+    // Designate the first worker for WebGL
+    this.glWorker = this.workers[0];
   }
 
   private spawnWorker(): PoolWorker {
@@ -74,6 +93,7 @@ export class WorkerPool {
         const req = pw.currentRequest;
         if (req && req.id === msg.id) {
           clearTimeout(req.timer);
+
           pw.busy = false;
           pw.currentRequest = null;
           const result = msg.result;
@@ -120,20 +140,34 @@ export class WorkerPool {
     if (this.destroyed) return;
     const idx = this.workers.indexOf(pw);
     if (idx === -1) return;
+    const wasGlWorker = pw === this.glWorker;
     // Terminate old worker (ignore errors — it may already be dead)
     try { pw.worker.terminate(); } catch {}
-    this.workers[idx] = this.spawnWorker();
+    const replacement = this.spawnWorker();
+    this.workers[idx] = replacement;
+    // If the GL worker crashed, the new one becomes the GL worker.
+    // The previous GL thread is gone, so the new thread can create GL contexts.
+    if (wasGlWorker) this.glWorker = replacement;
   }
 
   private dispatch(): void {
-    if (this.queue.length === 0) return;
-    const available = this.workers.find((w) => w.ready && !w.busy);
-    if (!available) return;
+    // Dispatch WebGL queue: pinned to glWorker, one at a time
+    if (this.glQueue.length > 0 && this.glWorker && this.glWorker.ready && !this.glWorker.busy) {
+      const req = this.glQueue.shift()!;
+      this.glWorker.busy = true;
+      this.glWorker.currentRequest = req;
+      this.glWorker.worker.postMessage({ id: req.id, options: req.options });
+    }
 
-    const req = this.queue.shift()!;
-    available.busy = true;
-    available.currentRequest = req;
-    available.worker.postMessage({ id: req.id, options: req.options });
+    // Dispatch non-WebGL queue: any available worker (including glWorker if idle)
+    while (this.queue.length > 0) {
+      const available = this.workers.find((w) => w.ready && !w.busy);
+      if (!available) break;
+      const req = this.queue.shift()!;
+      available.busy = true;
+      available.currentRequest = req;
+      available.worker.postMessage({ id: req.id, options: req.options });
+    }
   }
 
   async render(options: RendererOptions): Promise<RenderResult> {
@@ -143,6 +177,7 @@ export class WorkerPool {
 
     const timeout = options.timeout ?? this.defaultTimeout;
     const id = this.nextId++;
+    const webgl = isWebGLSketch(options.code);
 
     return new Promise<RenderResult>((resolveResult) => {
       const timer = setTimeout(() => {
@@ -154,9 +189,10 @@ export class WorkerPool {
           // Terminate and replace — the exit handler will spawn a new one
           try { pw.worker.terminate(); } catch {}
         } else {
-          // Still in queue — remove it
-          const qIdx = this.queue.findIndex((q) => q.id === id);
-          if (qIdx !== -1) this.queue.splice(qIdx, 1);
+          // Still in queue — remove it from whichever queue it's in
+          const targetQueue = webgl ? this.glQueue : this.queue;
+          const qIdx = targetQueue.findIndex((q) => q.id === id);
+          if (qIdx !== -1) targetQueue.splice(qIdx, 1);
         }
         resolveResult({
           ok: false,
@@ -165,22 +201,29 @@ export class WorkerPool {
           logs: [],
           partial_frames: [],
         });
+        // A WebGL slot may have freed up
+        this.dispatch();
       }, timeout);
 
-      const req: QueuedRequest = { id, options, resolve: resolveResult, timer };
-      this.queue.push(req);
+      const req: QueuedRequest = { id, options, resolve: resolveResult, timer, webgl };
+      if (webgl) {
+        this.glQueue.push(req);
+      } else {
+        this.queue.push(req);
+      }
       this.dispatch();
     });
   }
 
   async destroy(): Promise<void> {
     this.destroyed = true;
-    // Clear pending queue
-    for (const req of this.queue) {
+    // Clear pending queues
+    for (const req of [...this.queue, ...this.glQueue]) {
       clearTimeout(req.timer);
       req.resolve({ ok: false, error: "Worker pool destroyed", logs: [], partial_frames: [] });
     }
     this.queue = [];
+    this.glQueue = [];
     // Terminate all workers
     await Promise.all(this.workers.map((pw) => {
       if (pw.currentRequest) {
