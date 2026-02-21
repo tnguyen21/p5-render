@@ -3,7 +3,7 @@
  * Reports success/failure rates and error breakdowns.
  *
  * Usage:
- *   npx tsx test/test-render-sample.ts <input.jsonl> [--sample N] [--timeout MS] [--concurrency N] [--out-dir DIR]
+ *   npx tsx test/test-render-sample.ts <input.jsonl> [--sample N] [--timeout MS] [--concurrency N] [--out-dir DIR] [--warmup N] [--simulate-interaction] [--no-simulate-interaction]
  *
  * Example:
  *   npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 1000 --concurrency 8
@@ -32,12 +32,17 @@ let sampleSize = 1000;
 let timeout = 5000;
 let concurrency = 2;
 let outDir: string | undefined;
+let warmup = 60;
+let simulateInteraction = true;
 
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === "--sample") { sampleSize = parseInt(argv[++i], 10); continue; }
   if (argv[i] === "--timeout") { timeout = parseInt(argv[++i], 10); continue; }
   if (argv[i] === "--concurrency") { concurrency = parseInt(argv[++i], 10); continue; }
   if (argv[i] === "--out-dir") { outDir = argv[++i]; continue; }
+  if (argv[i] === "--warmup") { warmup = parseInt(argv[++i], 10); continue; }
+  if (argv[i] === "--simulate-interaction") { simulateInteraction = true; continue; }
+  if (argv[i] === "--no-simulate-interaction") { simulateInteraction = false; continue; }
   if (!argv[i].startsWith("-") && !inputPath) { inputPath = argv[i]; continue; }
 }
 
@@ -124,6 +129,8 @@ async function renderOne(sketch: Sketch, idx: number): Promise<Result> {
       timeout,
       isolate: true,
       seed: 42,
+      warmup,
+      simulateInteraction,
     });
 
     if (result.ok) {
