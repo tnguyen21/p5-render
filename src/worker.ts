@@ -1,8 +1,9 @@
 /**
- * Long-lived worker thread for rendering sketches.
+ * Long-lived worker subprocess for rendering sketches.
  *
- * Loads all heavy dependencies (jsdom, skia-canvas, gl) once on startup,
- * then processes render requests sent via parentPort messages.
+ * Runs as a child process (via child_process.fork) so that native-addon
+ * crashes (Rust panics in skia-canvas, segfaults in headless-gl) only
+ * kill this subprocess — the parent and other workers survive.
  *
  * Protocol:
  *   Worker → Parent: { type: "ready" }
@@ -11,33 +12,30 @@
  *     (frames/partial_frames are base64-encoded for transfer)
  */
 
-import { parentPort } from "node:worker_threads";
 import { renderSketchInProcess } from "./renderer.js";
 
-if (!parentPort) {
-  throw new Error("worker.ts must be run as a worker thread");
+function send(msg: any): void {
+  process.send!(msg);
 }
 
-const port = parentPort;
-
-port.on("message", async (msg: { id: number; options: any }) => {
+process.on("message", async (msg: { id: number; options: any }) => {
   try {
     const result = await renderSketchInProcess(msg.options);
     if (result.ok) {
-      port.postMessage({
+      send({
         type: "result",
         id: msg.id,
         result: { ...result, frames: result.frames.map((f) => f.toString("base64")) },
       });
     } else {
-      port.postMessage({
+      send({
         type: "result",
         id: msg.id,
         result: { ...result, partial_frames: result.partial_frames.map((f) => f.toString("base64")) },
       });
     }
   } catch (err) {
-    port.postMessage({
+    send({
       type: "result",
       id: msg.id,
       result: { ok: false, error: err instanceof Error ? err.message : String(err), logs: [], partial_frames: [] },
@@ -46,4 +44,4 @@ port.on("message", async (msg: { id: number; options: any }) => {
 });
 
 // Signal ready after all imports have resolved
-port.postMessage({ type: "ready" });
+send({ type: "ready" });
