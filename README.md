@@ -98,6 +98,10 @@ Batch-render a sample of real sketches from a JSONL dataset and report success/f
 npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl
 npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 500
 npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 1000 --concurrency 8 --timeout 10000
+
+# save rendered PNGs for visual review
+npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 100 --out-dir test/render-sample-output
+open test/render-sample-output/
 ```
 
 Results are written incrementally to `test/render-sample-results.jsonl` (survives crashes).

@@ -6,3 +6,4 @@ bench/baseline.json
 .DS_Store
 test/renders/
 test/render-sample-results.jsonl
+test/render-sample-output/

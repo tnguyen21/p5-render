@@ -3,14 +3,15 @@
  * Reports success/failure rates and error breakdowns.
  *
  * Usage:
- *   npx tsx test/test-render-sample.ts <input.jsonl> [--sample N] [--timeout MS] [--concurrency N]
+ *   npx tsx test/test-render-sample.ts <input.jsonl> [--sample N] [--timeout MS] [--concurrency N] [--out-dir DIR]
  *
  * Example:
  *   npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 1000 --concurrency 8
+ *   npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 100 --out-dir test/render-sample-output
  */
 
-import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderSketch } from "../src/renderer.js";
 import { destroyPool } from "../src/pool.js";
@@ -30,24 +31,30 @@ let inputPath: string | undefined;
 let sampleSize = 1000;
 let timeout = 5000;
 let concurrency = 2;
+let outDir: string | undefined;
 
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === "--sample") { sampleSize = parseInt(argv[++i], 10); continue; }
   if (argv[i] === "--timeout") { timeout = parseInt(argv[++i], 10); continue; }
   if (argv[i] === "--concurrency") { concurrency = parseInt(argv[++i], 10); continue; }
+  if (argv[i] === "--out-dir") { outDir = argv[++i]; continue; }
   if (!argv[i].startsWith("-") && !inputPath) { inputPath = argv[i]; continue; }
 }
 
 if (!inputPath) {
-  console.error("Usage: npx tsx test/test-render-sample.ts <input.jsonl> [--sample N] [--timeout MS] [--concurrency N]");
+  console.error("Usage: npx tsx test/test-render-sample.ts <input.jsonl> [--sample N] [--timeout MS] [--concurrency N] [--out-dir DIR]");
   process.exit(1);
 }
 
 const resolvedInput = resolve(inputPath);
 const RESULTS_PATH = resolve(__dirname, "render-sample-results.jsonl");
+const resolvedOutDir = outDir ? resolve(outDir) : undefined;
+
+if (resolvedOutDir) mkdirSync(resolvedOutDir, { recursive: true });
 
 // Load and filter to p5js
 console.log(`Loading sketches from ${resolvedInput}...`);
+if (resolvedOutDir) console.log(`Saving PNGs to ${resolvedOutDir}/`);
 const lines = readFileSync(resolvedInput, "utf-8").split("\n").filter((l) => l.trim());
 const allSketches: Sketch[] = [];
 for (const line of lines) {
@@ -120,6 +127,9 @@ async function renderOne(sketch: Sketch, idx: number): Promise<Result> {
     });
 
     if (result.ok) {
+      if (resolvedOutDir) {
+        writeFileSync(join(resolvedOutDir, `${sketch.id}.png`), result.frames[0]);
+      }
       process.stdout.write(`\r\x1b[K${label} \x1b[32mok\x1b[0m ${result.duration_ms}ms\n`);
       return {
         id: sketch.id,
@@ -193,6 +203,7 @@ async function main() {
   }
 
   console.log(`\nDetailed results: ${RESULTS_PATH}`);
+  if (resolvedOutDir) console.log(`Rendered PNGs:    ${resolvedOutDir}/`);
 }
 
 main().catch((err) => {
