@@ -201,6 +201,8 @@ export async function renderSketchInProcess(options: RendererOptions): Promise<R
           if (!p.p5) p.p5 = p5Constructor;
           if (!p.screen) p.screen = window.screen;
           if (!p.document) p.document = document;
+          // Some sketches call blur() as a standalone CSS filter shorthand
+          if (!p.blur) p.blur = () => {};
 
           try {
             sketchFn(p);

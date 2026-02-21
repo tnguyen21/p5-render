@@ -65,7 +65,7 @@ export function createEnvironment(
   const virtualConsole = new VirtualConsole();
   if (onJsdomError) virtualConsole.on("jsdomError", (err: any) => onJsdomError(String(err?.message ?? err)));
 
-  const dom = new JSDOM(`<!DOCTYPE html><html><head></head><body></body></html>`, {
+  const dom = new JSDOM(`<!DOCTYPE html><html><head></head><body><main></main></body></html>`, {
     url: "http://localhost",
     pretendToBeVisual: true,
     runScripts: "dangerously",

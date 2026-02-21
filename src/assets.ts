@@ -40,8 +40,12 @@ export function patchAssetLoaders(p: any, assets: AssetMap): void {
   // Patch loadFont to not hang on missing fonts
   const originalLoadFont = p.loadFont?.bind(p);
   p.loadFont = function (path: string, successCallback?: Function, failureCallback?: Function) {
-    // Return a stub font object and decrement preload
-    const stub = {};
+    // Return a stub font object with common methods sketches expect
+    const stub = {
+      font: { names: {}, glyphs: { glyphs: {} }, unitsPerEm: 1000 },
+      textToPoints(str: string, x: number, y: number, size: number, opts?: any) { return []; },
+      textBounds(str: string, x: number, y: number, size: number) { return { x, y, w: 0, h: 0 }; },
+    };
     queueMicrotask(() => {
       try { p._decrementPreload(); } catch {}
       if (successCallback) successCallback(stub);
