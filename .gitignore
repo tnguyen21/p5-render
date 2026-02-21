@@ -5,3 +5,4 @@ test/references/
 bench/baseline.json
 .DS_Store
 test/renders/
+test/render-sample-results.jsonl

@@ -92,15 +92,15 @@ open test/renders/            # browse results
 
 ### Real-world sketch test
 
-Batch-render a sample of real OpenProcessing sketches from `data/openprocessing/train.jsonl` and report success/failure rates with error breakdowns:
+Batch-render a sample of real sketches from a JSONL dataset and report success/failure rates with error breakdowns:
 
 ```bash
-npx tsx ../scripts/test-render-sample.ts                          # default: 1000 sketches, concurrency 2
-npx tsx ../scripts/test-render-sample.ts --sample 500             # smaller sample
-npx tsx ../scripts/test-render-sample.ts --sample 1000 --concurrency 8 --timeout 10000
+npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl
+npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 500
+npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 1000 --concurrency 8 --timeout 10000
 ```
 
-Results are written incrementally to `data/render-test-results.jsonl` (survives crashes).
+Results are written incrementally to `test/render-sample-results.jsonl` (survives crashes).
 
 ### Reference images
 

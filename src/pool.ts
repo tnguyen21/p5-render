@@ -57,6 +57,7 @@ export class WorkerPool {
 
   private spawnWorker(): PoolWorker {
     const worker = new Worker(this.workerPath);
+    worker.setMaxListeners(20);
     let resolveReady: () => void;
     const readyPromise = new Promise<void>((r) => { resolveReady = r; });
 
