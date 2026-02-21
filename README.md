@@ -90,6 +90,18 @@ bun run render-all /tmp/out   # custom output directory
 open test/renders/            # browse results
 ```
 
+### Real-world sketch test
+
+Batch-render a sample of real OpenProcessing sketches from `data/openprocessing/train.jsonl` and report success/failure rates with error breakdowns:
+
+```bash
+npx tsx ../scripts/test-render-sample.ts                          # default: 1000 sketches, concurrency 2
+npx tsx ../scripts/test-render-sample.ts --sample 500             # smaller sample
+npx tsx ../scripts/test-render-sample.ts --sample 1000 --concurrency 8 --timeout 10000
+```
+
+Results are written incrementally to `data/render-test-results.jsonl` (survives crashes).
+
 ### Reference images
 
 Test sketches are compared against browser-rendered reference PNGs (when they exist).
