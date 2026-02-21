@@ -1,12 +1,12 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Worker } from "node:worker_threads";
 import { Canvas } from "skia-canvas";
 import { createEnvironment, type HeadlessEnvironment } from "./shim.js";
 import { wrapGlobalSketch } from "./global-mode-adapter.js";
 import { DeterministicClock } from "./clock.js";
 import { patchAssetLoaders, type AssetMap } from "./assets.js";
+import { patchSoundStubs } from "./sound-stubs.js";
 import { clampDimensions, createConsoleCapture, parseError, withTimeout, type SketchPhase, DEFAULT_TIMEOUT_MS } from "./sandbox.js";
 
 export interface RendererOptions {
@@ -149,7 +149,7 @@ export async function renderSketchInProcess(options: RendererOptions): Promise<R
     const result = await withTimeout(
       async () => {
         ({ width, height } = clampDimensions(width, height, logs));
-        env = createEnvironment(width, height);
+        env = createEnvironment(width, height, (msg) => logs.push(`[jsdom] ${msg}`));
         const { window, document, stepFrame } = env;
         window.console = capturedConsole;
 
@@ -191,6 +191,7 @@ export async function renderSketchInProcess(options: RendererOptions): Promise<R
         const wrappedSketchFn = function (p: any) {
           if (seed !== undefined) window.Math.random = mulberry32(seed);
           patchAssetLoaders(p, assets);
+          patchSoundStubs(p, p5Constructor);
           clock.patchP5Instance(p);
           p.mouseX = width / 2;
           p.mouseY = height / 2;
@@ -311,61 +312,15 @@ export async function renderSketchInProcess(options: RendererOptions): Promise<R
   }
 }
 
-function resolveRendererModuleUrl(): string {
-  const dir = dirname(fileURLToPath(import.meta.url));
-  const jsPath = resolve(dir, "renderer.js");
-  if (existsSync(jsPath)) return "file://" + jsPath;
-  const distPath = resolve(dir, "..", "dist", "renderer.js");
-  if (existsSync(distPath)) return "file://" + distPath;
-  throw new Error("Cannot find compiled renderer.js for worker thread. Run 'bun run build' first.");
-}
-
 /**
- * Run a sketch in a worker thread with a hard timeout.
- * Worker.terminate() kills synchronous infinite loops that block the event loop.
+ * Run a sketch in an isolated worker thread via the worker pool.
+ * Pool workers are long-lived, avoiding per-request native module loading
+ * that causes SIGSEGV crashes during batch rendering.
  */
 async function renderSketchIsolated(options: RendererOptions): Promise<RenderResult> {
-  const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
-  const rendererUrl = resolveRendererModuleUrl();
-
-  const workerScript = `
-    import { workerData, parentPort } from "node:worker_threads";
-    const { renderSketchInProcess } = await import(${JSON.stringify(rendererUrl)});
-    try {
-      const result = await renderSketchInProcess(workerData);
-      if (result.ok) {
-        parentPort.postMessage({ ...result, frames: result.frames.map(f => f.toString("base64")) });
-      } else {
-        parentPort.postMessage({ ...result, partial_frames: result.partial_frames.map(f => f.toString("base64")) });
-      }
-    } catch (err) {
-      parentPort.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err), logs: [], partial_frames: [] });
-    }
-  `;
-
-  return new Promise<RenderResult>((resolve) => {
-    const worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(workerScript)}`), { workerData: options });
-
-    const timer = setTimeout(() => {
-      worker.terminate().then(() => {
-        resolve({ ok: false, error: `Timeout: sketch rendering exceeded ${timeout}ms`, phase: "draw" as SketchPhase, logs: [], partial_frames: [] });
-      });
-    }, timeout);
-
-    worker.on("message", (msg: any) => {
-      clearTimeout(timer);
-      if (msg.ok) msg.frames = msg.frames.map((s: string) => Buffer.from(s, "base64"));
-      else msg.partial_frames = (msg.partial_frames || []).map((s: string) => Buffer.from(s, "base64"));
-      resolve(msg);
-    });
-
-    worker.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({ ok: false, error: err.message, logs: [], partial_frames: [] });
-    });
-
-    worker.on("exit", () => clearTimeout(timer));
-  });
+  const { getPool } = await import("./pool.js");
+  const pool = getPool(4);
+  return pool.render(options);
 }
 
 export async function renderSketch(options: RendererOptions): Promise<RenderResult> {

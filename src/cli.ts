@@ -9,6 +9,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { renderSketch } from "./renderer.js";
+import { getPool, destroyPool } from "./pool.js";
 
 interface CliArgs {
   command: "render" | "batch";
@@ -230,12 +231,15 @@ async function renderBatch(args: CliArgs): Promise<void> {
     })
     .filter((e): e is NonNullable<typeof e> => e !== null);
 
+  // Pre-initialize worker pool for batch mode
+  const pool = getPool(args.concurrency, args.timeout);
+
   let completed = 0;
   let errors = 0;
 
   async function processOne(entry: { code: string; id?: string }, idx: number): Promise<void> {
     const id = entry.id || `sketch_${idx}`;
-    const result = await renderSketch({
+    const result = await pool.render({
       code: entry.code,
       width: args.width,
       height: args.height,
@@ -267,6 +271,7 @@ async function renderBatch(args: CliArgs): Promise<void> {
     }
   }
   await Promise.all(active);
+  await destroyPool();
 
   console.log(`Batch complete: ${completed} rendered, ${errors} errors, output in ${resolve(outDir)}/`);
 }

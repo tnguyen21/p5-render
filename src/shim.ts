@@ -6,7 +6,7 @@
  * are provided via headless-gl.
  */
 
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import { Canvas } from "skia-canvas";
 import { createRequire } from "node:module";
 
@@ -35,11 +35,19 @@ export interface HeadlessEnvironment {
   destroy: () => void;
 }
 
-export function createEnvironment(width = 400, height = 400): HeadlessEnvironment {
+export function createEnvironment(
+  width = 400,
+  height = 400,
+  onJsdomError?: (msg: string) => void,
+): HeadlessEnvironment {
+  const virtualConsole = new VirtualConsole();
+  if (onJsdomError) virtualConsole.on("jsdomError", (err: any) => onJsdomError(String(err?.message ?? err)));
+
   const dom = new JSDOM(`<!DOCTYPE html><html><head></head><body></body></html>`, {
     url: "http://localhost",
     pretendToBeVisual: true,
     runScripts: "dangerously",
+    virtualConsole,
   });
 
   const window = dom.window as any;
@@ -81,7 +89,32 @@ export function createEnvironment(width = 400, height = 400): HeadlessEnvironmen
   const tmpCtx = new Canvas(1, 1).getContext("2d");
   window.ImageData = tmpCtx.getImageData(0, 0, 1, 1).constructor;
 
-  window.AudioContext = class { close() {} };
+  // Expanded AudioContext stub for p5.sound compatibility
+  const noopNode = { connect() { return this; }, disconnect() {}, addEventListener() {} };
+  window.AudioContext = class {
+    sampleRate = 44100;
+    currentTime = 0;
+    state = "running";
+    destination = { ...noopNode, maxChannelCount: 2, numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2 };
+    listener = { positionX: { value: 0 }, positionY: { value: 0 }, positionZ: { value: 0 } };
+    createGain() { return { gain: { value: 1, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, ...noopNode }; }
+    createOscillator() { return { frequency: { value: 440, setValueAtTime() {} }, type: "sine", start() {}, stop() {}, ...noopNode }; }
+    createAnalyser() { return { fftSize: 2048, frequencyBinCount: 1024, getByteFrequencyData() {}, getFloatFrequencyData() {}, getByteTimeDomainData() {}, getFloatTimeDomainData() {}, ...noopNode }; }
+    createBiquadFilter() { return { frequency: { value: 350, setValueAtTime() {} }, Q: { value: 1 }, type: "lowpass", ...noopNode }; }
+    createDelay() { return { delayTime: { value: 0, setValueAtTime() {} }, ...noopNode }; }
+    createDynamicsCompressor() { return { threshold: { value: -24 }, knee: { value: 30 }, ratio: { value: 12 }, attack: { value: 0.003 }, release: { value: 0.25 }, ...noopNode }; }
+    createConvolver() { return { buffer: null, ...noopNode }; }
+    createStereoPanner() { return { pan: { value: 0, setValueAtTime() {} }, ...noopNode }; }
+    createMediaStreamSource() { return noopNode; }
+    createScriptProcessor() { return { onaudioprocess: null, ...noopNode }; }
+    createBufferSource() { return { buffer: null, playbackRate: { value: 1 }, loop: false, start() {}, stop() {}, ...noopNode }; }
+    createBuffer(channels: number, length: number, rate: number) { return { numberOfChannels: channels, length, sampleRate: rate, getChannelData: () => new Float32Array(length) }; }
+    decodeAudioData(_buf: any, ok?: Function) { const b = this.createBuffer(1, 1, this.sampleRate); if (ok) ok(b); return Promise.resolve(b); }
+    resume() { return Promise.resolve(); }
+    suspend() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+  };
+  window.webkitAudioContext = window.AudioContext;
 
   // Stub WebGLRenderingContext so p5's instanceof checks work
   const createGL = getCreateGL();
@@ -96,6 +129,9 @@ export function createEnvironment(width = 400, height = 400): HeadlessEnvironmen
 
   const start = Date.now();
   window.performance = { now: () => Date.now() - start };
+
+  // Suppress unhandled errors from bubbling to Node's stderr
+  window.onerror = () => true;
 
   return {
     window,
