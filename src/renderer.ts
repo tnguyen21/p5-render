@@ -18,6 +18,10 @@ export interface RendererOptions {
   seed?: number;
   timeout?: number;
   assets?: AssetMap;
+  /** Run N draw() calls before the capture window, discarding output. */
+  warmup?: number;
+  /** During warmup, dispatch synthetic mouse events to trigger p5 event handlers. */
+  simulateInteraction?: boolean;
   /** Run in a worker thread so synchronous infinite loops can be terminated. */
   isolate?: boolean;
 }
@@ -136,8 +140,33 @@ function yieldToEventLoop(ms = 10): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Dispatch synthetic mouse events during warmup frames.
+ * Sweeps mouse across canvas in a Lissajous pattern and clicks periodically.
+ */
+function dispatchMouseInteraction(
+  window: any,
+  canvasWidth: number,
+  canvasHeight: number,
+  frameIndex: number,
+  totalWarmupFrames: number,
+): void {
+  const t = totalWarmupFrames > 1 ? frameIndex / (totalWarmupFrames - 1) : 0.5;
+  const clientX = canvasWidth * (0.5 + 0.4 * Math.sin(t * 2 * Math.PI));
+  const clientY = canvasHeight * (0.5 + 0.4 * Math.cos(t * 3 * Math.PI));
+  const eventInit = { clientX, clientY, bubbles: true };
+
+  window.dispatchEvent(new window.MouseEvent("mousemove", eventInit));
+
+  if (frameIndex % 15 === 0) {
+    window.dispatchEvent(new window.MouseEvent("mousedown", eventInit));
+    window.dispatchEvent(new window.MouseEvent("mouseup", eventInit));
+    window.dispatchEvent(new window.MouseEvent("click", eventInit));
+  }
+}
+
 export async function renderSketchInProcess(options: RendererOptions): Promise<RenderResult> {
-  const { code, frames: frameCount = 1, frameRate = 60, seed, timeout = DEFAULT_TIMEOUT_MS, assets = {} } = options;
+  const { code, frames: frameCount = 1, frameRate = 60, seed, timeout = DEFAULT_TIMEOUT_MS, assets = {}, warmup = 0, simulateInteraction: doInteraction = false } = options;
   let { width = 400, height = 400 } = options;
 
   const { logs, console: capturedConsole } = createConsoleCapture();
@@ -187,6 +216,7 @@ export async function renderSketchInProcess(options: RendererOptions): Promise<R
         let setupDone = false;
         let drawCount = 0;
         let drawError: any = null;
+        let capturing = false;
 
         const wrappedSketchFn = function (p: any) {
           if (seed !== undefined) window.Math.random = mulberry32(seed);
@@ -282,9 +312,11 @@ export async function renderSketchInProcess(options: RendererOptions): Promise<R
               drawError = { err, phase: "draw" as SketchPhase, frameNumber: drawCount };
               return;
             }
-            const frame = captureFrame(p, document);
-            if (frame) capturedFrames.push(frame);
-            else logs.push(`[p5-render] Warning: could not capture frame ${drawCount}`);
+            if (capturing) {
+              const frame = captureFrame(p, document);
+              if (frame) capturedFrames.push(frame);
+              else logs.push(`[p5-render] Warning: could not capture frame ${drawCount}`);
+            }
           };
         };
 
@@ -312,9 +344,28 @@ export async function renderSketchInProcess(options: RendererOptions): Promise<R
           return { ok: false as const, error: "Timed out waiting for setup() to complete", phase: "setup" as SketchPhase, logs, partial_frames: capturedFrames };
         }
 
-        // Discard frames captured during p5 init, step through requested count
+        // Discard frames captured during p5 init
         capturedFrames.length = 0;
         drawCount = 0;
+
+        // Warmup: run N draw() calls without capturing
+        for (let i = 0; i < warmup && !drawError; i++) {
+          if (doInteraction) {
+            dispatchMouseInteraction(window, width, height, i, warmup);
+          }
+          try {
+            p5Instance.redraw();
+          } catch (err) {
+            return { ok: false as const, ...parseError(err, "draw", drawCount), logs, partial_frames: capturedFrames };
+          }
+        }
+
+        if (drawError) {
+          return { ok: false as const, ...parseError(drawError.err, drawError.phase, drawError.frameNumber), logs, partial_frames: capturedFrames };
+        }
+
+        // Begin capturing
+        capturing = true;
 
         for (let i = 0; i < frameCount && !drawError; i++) {
           try {

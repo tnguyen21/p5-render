@@ -250,6 +250,27 @@ function patchCanvasElement(el: any, defaultWidth: number, defaultHeight: number
   let cachedCtx: any = null;
   let cachedGlCtx: any = null;
 
+  // getBoundingClientRect — JSDOM returns all zeros (no layout engine),
+  // which makes p5's getMousePos() divide by zero. Return dimensions
+  // matching the canvas so mouse coordinates work correctly.
+  el.getBoundingClientRect = function () {
+    return {
+      top: 0, left: 0, right: skia.width, bottom: skia.height,
+      width: skia.width, height: skia.height, x: 0, y: 0,
+      toJSON() { return this; },
+    };
+  };
+
+  // scrollWidth/scrollHeight — also used by p5's mouse coordinate math
+  Object.defineProperty(el, "scrollWidth", {
+    get: () => skia.width,
+    configurable: true,
+  });
+  Object.defineProperty(el, "scrollHeight", {
+    get: () => skia.height,
+    configurable: true,
+  });
+
   el.getContext = function (type: string, attrs?: any) {
     if (type === "2d") {
       if (cachedCtx) return cachedCtx;

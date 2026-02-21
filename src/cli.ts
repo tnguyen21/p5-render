@@ -23,6 +23,8 @@ interface CliArgs {
   height?: number;
   concurrency: number;
   isolate: boolean;
+  warmup?: number;
+  simulateInteraction?: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -75,6 +77,15 @@ function parseArgs(argv: string[]): CliArgs {
       case "--isolate":
         result.isolate = true;
         break;
+      case "--warmup":
+        result.warmup = parseInt(args[++i], 10);
+        break;
+      case "--simulate-interaction":
+        result.simulateInteraction = true;
+        break;
+      case "--no-simulate-interaction":
+        result.simulateInteraction = false;
+        break;
       case "-h":
       case "--help":
         printHelp();
@@ -113,6 +124,9 @@ Options:
   --out-dir <dir>         Output directory (for batch or multi-frame)
   --concurrency <N>       Batch concurrency (default: 4)
   --isolate               Run sketch in worker thread (enables hard timeout)
+  --warmup <N>            Run N draw() calls before capture (default: 0, batch: 60)
+  --simulate-interaction  Dispatch synthetic mouse events during warmup
+  --no-simulate-interaction  Disable interaction simulation in batch mode
   -h, --help              Show this help message
 
 Examples:
@@ -159,6 +173,8 @@ async function renderSingle(args: CliArgs): Promise<void> {
     seed: args.seed,
     timeout: args.timeout,
     isolate: args.isolate,
+    warmup: args.warmup,
+    simulateInteraction: args.simulateInteraction,
   });
 
   if (!result.ok) {
@@ -237,6 +253,9 @@ async function renderBatch(args: CliArgs): Promise<void> {
   let completed = 0;
   let errors = 0;
 
+  const batchWarmup = args.warmup ?? 60;
+  const batchInteraction = args.simulateInteraction ?? true;
+
   async function processOne(entry: { code: string; id?: string }, idx: number): Promise<void> {
     const id = entry.id || `sketch_${idx}`;
     const result = await pool.render({
@@ -247,6 +266,8 @@ async function renderBatch(args: CliArgs): Promise<void> {
       seed: args.seed,
       timeout: args.timeout,
       isolate: true,
+      warmup: batchWarmup,
+      simulateInteraction: batchInteraction,
     });
 
     if (result.ok) {

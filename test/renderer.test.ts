@@ -156,6 +156,41 @@ describe("WebGL", () => {
   });
 });
 
+describe("Warmup and interaction", () => {
+  it("warmup 0 preserves existing behavior", async () => {
+    const code = readSketch("01_blank_canvas.js");
+    const result = await renderSketch({ code, warmup: 0 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.frames.length).toBe(1);
+  });
+
+  it("warmup accumulates visuals (random walker)", async () => {
+    const code = readSketch("81_random_walker.js");
+    const noWarmup = await renderSketch({ code, seed: 42, warmup: 0 });
+    const withWarmup = await renderSketch({ code, seed: 42, warmup: 30 });
+    expect(noWarmup.ok).toBe(true);
+    expect(withWarmup.ok).toBe(true);
+    if (!noWarmup.ok || !withWarmup.ok) return;
+    // The two captures should differ — warmup adds more drawn content
+    const comparison = await comparePngs(noWarmup.frames[0], withWarmup.frames[0]);
+    expect(comparison.diffPixelCount).toBeGreaterThan(0);
+  });
+
+  it("simulateInteraction moves mouse across canvas", async () => {
+    const code = readSketch("80_interactive_mouse.js");
+    const noInteraction = await renderSketch({ code, warmup: 30, simulateInteraction: false });
+    const withInteraction = await renderSketch({ code, warmup: 30, simulateInteraction: true });
+    expect(noInteraction.ok).toBe(true);
+    expect(withInteraction.ok).toBe(true);
+    if (!noInteraction.ok || !withInteraction.ok) return;
+    // With interaction, circles are drawn at varying positions (Lissajous),
+    // so the output should differ from mouse-at-center only
+    const comparison = await comparePngs(noInteraction.frames[0], withInteraction.frames[0]);
+    expect(comparison.diffPixelCount).toBeGreaterThan(0);
+  });
+});
+
 describe("Error handling", () => {
   it("syntax error returns structured error", async () => {
     const result = await renderSketch({ code: readSketch("60_syntax_error.js") });
