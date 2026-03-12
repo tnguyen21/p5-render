@@ -51,6 +51,7 @@ if (result.ok) {
 ```
 
 Options:
+
 - `code` — sketch source (global or instance mode)
 - `width`, `height` — canvas size (default 400x400, max 4096)
 - `frames` — number of frames to render (default 1)
@@ -97,7 +98,7 @@ Batch-render a sample of real sketches from a JSONL dataset and report success/f
 ```bash
 npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl
 npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 500
-npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 1000 --concurrency 8 --timeout 10000
+npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 500 --concurrency 8 --timeout 15000
 
 # save rendered PNGs for visual review
 npx tsx test/test-render-sample.ts ../data/openprocessing/train.jsonl --sample 100 --out-dir test/render-sample-output
