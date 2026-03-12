@@ -1,0 +1,6 @@
+[project]
+name = "p5-render"
+
+[hive]
+backend = "claude"
+merge_queue_enabled = false
